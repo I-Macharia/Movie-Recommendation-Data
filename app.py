@@ -1,37 +1,23 @@
-from flask import Flask, request, jsonify, render_template
 import pandas as pd
-import numpy as np
-from sklearn.metrics.pairwise import cosine_similarity
-from surprise import Reader, Dataset, SVD
 import requests
+import streamlit as st
+from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
-app = Flask(__name__)
 
-# Load the movie data
-movies_credits = pd.read_csv('movies_credits.csv')
+def fetch_poster(movie_id):
+    api_key = "53607277a4abba625e13562a61ea99d5"
+    url = f"https://api.themoviedb.org/3/movie/{movie_id}?api_key={api_key}&language=en-US"
+    data = requests.get(url)
+    data = data.json()
+    poster_path = data['poster_path']
+    full_path = "https://image.tmdb.org/t/p/w500/" + poster_path
+    return full_path
 
-# Compute the cosine similarity matrix
-cosine_sim2 = cosine_similarity(tfidfv_matrix, tfidfv_matrix)
 
-# Set up the Surprise library
-reader = Reader()
-ratings = pd.read_csv('ratings.csv')
-data = Dataset.load_from_df(ratings[['userId', 'movieId', 'rating']], reader)
-trainset = data.build_full_trainset()
-algo = SVD()
-algo.fit(trainset)
-
-# Create a dictionary mapping movie titles to their indices
-indices = pd.Series(movies_credits.index, index=movies_credits['title']).drop_duplicates()
-
-@app.route('/recommendations', methods=['POST'])
-def get_recommendations():
-    # Get the user ID and movie title from the request
-    user_id = int(request.json['userId'])
-    movie_title = request.json['title']
-
+def hybrid_recommendations(title, cosine_sim2, movies_credits):
     # Get the index of the movie that matches the title
-    idx = indices[movie_title]
+    idx = movies_credits[movies_credits['title'] == title].index[0]
 
     # Get the pairwise similarity scores of all movies with that movie
     sim_scores = list(enumerate(cosine_sim2[idx]))
@@ -43,46 +29,71 @@ def get_recommendations():
     sim_scores = sim_scores[1:11]
 
     # Get the movie indices
-    movie_indices = [x[0] for x in sim_scores]
+    ind = [x for x, _ in sim_scores]
 
-    # Grab the title, movie ID, vote average, and vote count of the top 10 most similar movies
-    recommendations = movies_credits.iloc[movie_indices][['title', 'movieId', 'vote_average', 'vote_count']]
+    # Grab the title, id, vote_average, and vote_count of the top 10 most similar movies
+    tit = []
+    movieid = []
+    vote_average = []
+    vote_count = []
+    for x in ind:
+        tit.append(movies_credits.iloc[x]['title'])
+        movieid.append(movies_credits.iloc[x]['id'])
+        vote_average.append(movies_credits.iloc[x]['vote_average'])
+        vote_count.append(movies_credits.iloc[x]['vote_count'])
 
-    # Predict the ratings a user might give to these top 10 most similar movies
-    estimated_ratings = []
-    for movie_id in recommendations['movieId']:
-        estimated_ratings.append(algo.predict(user_id, movie_id).est)
+    return pd.DataFrame({
+        'index': ind,
+        'title': tit,
+        'id': movieid,
+        'vote_average': vote_average,
+        'vote_count': vote_count
+    }).set_index('index').sort_values(by='vote_average', ascending=False)
 
-    # Add the estimated ratings to the recommendations DataFrame
-    recommendations['estimated_rating'] = estimated_ratings
 
-    # Get the poster images for the recommendations from TMDb API
-    api_key = '53607277a4abba625e13562a61ea99d5'
-    base_url = 'https://api.themoviedb.org/3/movie/'
-    poster_size = 'w500'
-    posters = []
-    for movie_id in recommendations['movieId']:
-        url = f'{base_url}{movie_id}?api_key={api_key}'
-        response = requests.get(url)
-        if response.status_code == 200:
-            data = response.json()
-            if 'poster_path' in data and data['poster_path']:
-                poster_path = data['poster_path']
-                poster_url = f'https://image.tmdb.org/t/p/{poster_size}/{poster_path}'
-                posters.append(poster_url)
-            else:
-                posters.append(None)
-        else:
-            posters.append(None)
+st.header('Movie Recommender System')
 
-    # Add the poster URLs to the recommendations DataFrame
-    recommendations['poster_url'] = posters
+# Load and merge the TMDB movies.csv and TMDB credits.csv
+tmdb_movies = pd.read_csv("C:\\Users\\wanji\\OneDrive\\Desktop\\New folder (2)\\Movie-Recommendation-Data\\.data\\tmdb_5000_movies.csv")
+tmdb_credits = pd.read_csv("C:\\Users\\wanji\\OneDrive\\Desktop\\New folder (2)\\Movie-Recommendation-Data\\.data\\tmdb_5000_credits.csv")
 
-    # Return the recommendations as JSON response
-    return recommendations.to_json(orient='records')
+# Drop the Title column in Movies Dataset
+tmdb_movies.drop(['title'], axis=1, inplace=True)
 
-@app.route('/', methods=['GET'])
-def home():
-    return render_template('index.html')
+# Identify the columns that are common and need to be merged
+tmdb_credits.columns = ['id', 'title', 'cast', 'crew']
 
-flask run
+# Adjust column names if necessary
+movies_credits = pd.merge(tmdb_credits, tmdb_movies, on='id')
+
+# Create the 'soup' column by combining relevant features
+movies_credits['soup'] = movies_credits['overview'] + ' ' + movies_credits['genres'] + ' ' + movies_credits['keywords']
+
+# Fill missing values in 'soup' column with an empty string
+movies_credits['soup'].fillna('', inplace=True)
+
+# Calculate cosine similarity
+cv = CountVectorizer(stop_words='english')
+cv_matrix = cv.fit_transform(movies_credits['soup'])
+cosine_sim2 = cosine_similarity(cv_matrix, cv_matrix)
+
+movie_list = movies_credits['title'].values
+
+selected_movie = st.selectbox(
+    "Type or select a movie from the dropdown",
+    movie_list
+)
+
+if st.button('Show Recommendation'):
+    recommended_movies = hybrid_recommendations(selected_movie, cosine_sim2, movies_credits)
+
+    columns = st.columns(5)
+    displayed_titles = []
+    for _, movie in recommended_movies.iterrows():
+        title = movie['title']
+        if title not in displayed_titles:
+            displayed_titles.append(title)
+            with columns[0]:
+                st.text(title)
+                st.image(fetch_poster(movie['id']))
+            columns = columns[1:] + [columns[0]]
