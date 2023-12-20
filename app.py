@@ -54,8 +54,8 @@ def hybrid_recommendations(title, cosine_sim2, movies_credits):
 st.header('Movie Recommender System')
 
 # Absolute paths to the data files
-tmdb_movies_path = r"C:\Users\wanji\OneDrive\Desktop\Movie Recommender\Movie-Recommendation-Data\.data\tmdb_5000_movies.csv"
-tmdb_credits_path = r"C:\Users\wanji\OneDrive\Desktop\Movie Recommender\Movie-Recommendation-Data\.data\tmdb_5000_credits.csv"
+tmdb_movies_path = r".data\tmdb_5000_movies.csv"
+tmdb_credits_path = r".data\tmdb_5000_credits.csv"
 
 # Read the CSV files
 tmdb_movies = pd.read_csv(tmdb_movies_path)
